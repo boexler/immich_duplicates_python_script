@@ -12,6 +12,8 @@ Python script to intelligently detect and delete **duplicate photos/videos** on 
   2. **Preferred format** : `.heic` in priority
   3. **File's size** (we keep the largest)
   4. **Richness of EXIF metadata**
+- 📋 **Only pairs mode** – process only groups with exactly 2 files (e.g. JPG+HEIC); skip series with 3+ for manual selection
+- 🔄 **Metadata transfer** – optionally transfer albums, tags, and location/EXIF from deleted assets to the kept one (augment only, never overwrite)
 - 🧪 **Simulation mode** to test without deleting, useful for viewing logs
 - 🗑️ Option to delete to the recycle bin or permanently
 - 📄 Automatic logging to a `.log` file (optional)
@@ -23,6 +25,22 @@ Python script to intelligently detect and delete **duplicate photos/videos** on 
 - Immich server operational (self-hosted or public)
 - A valid **API key**
 - Python ≥ 3.7
+
+### API Key and Permissions
+
+Create an API key in Immich under **Settings → API Keys**. The key needs the following permissions:
+
+| Permission | Purpose |
+|------------|---------|
+| `duplicate.read` | Retrieve duplicate groups |
+| `asset.delete` | Delete duplicate assets |
+| `asset.update` | Transfer location/EXIF metadata (when `IMMICH_TRANSFER_METADATA=true`) |
+| `album.read` | Read album memberships for metadata transfer |
+| `album.asset.create` | Add kept asset to albums (when `IMMICH_TRANSFER_METADATA=true`) |
+| `album.asset.delete` | Remove kept asset from albums (when `IMMICH_KEEP_METADATA=false`) |
+| `tag.asset` | Add/remove tags for metadata transfer |
+
+A full-access API key includes all of these. If you only use `IMMICH_TRANSFER_METADATA=false` and `IMMICH_KEEP_METADATA=true`, the minimum required permissions are `duplicate.read` and `asset.delete`.
 
 ---
 
@@ -61,6 +79,9 @@ Python script to intelligently detect and delete **duplicate photos/videos** on 
    - `IMMICH_DRY_RUN` – `true` to simulate only (default), `false` to actually delete
    - `IMMICH_DEFINITELY` – `false` for recycle bin (default), `true` for permanent deletion
    - `IMMICH_ENABLE_LOG` – `true` or `false` for log file creation
+   - `IMMICH_ONLY_PAIRS` – `false` (default) to process all groups, `true` to process only groups with exactly 2 files
+   - `IMMICH_KEEP_METADATA` – `true` (default) to let the kept image keep its metadata, `false` to remove it before transfer
+   - `IMMICH_TRANSFER_METADATA` – `true` (default) to transfer albums, tags, location from deleted assets to the kept one
 
 Alternatively, set these as environment variables directly instead of using a `.env` file.
 
@@ -96,6 +117,8 @@ Script Python pour détecter et supprimer intelligemment les **doublons photos/v
   - **Format préféré** : `.heic` en priorité
   - **Taille du fichier** (on garde le plus lourd)
   - **Richesse des métadonnées EXIF**
+- 📋 **Mode paires uniquement** – ne traiter que les groupes de 2 fichiers (ex. JPG+HEIC) ; ignorer les séries de 3+ pour sélection manuelle
+- 🔄 **Transfert de métadonnées** – transférer albums, tags et localisation/EXIF des fichiers supprimés vers le gardé (augmentation uniquement)
 - 🧪 **Mode simulation** pour tester sans supprimer, utile pour voir les logs
 - 🗑️ Option de suppression dans la corbeille ou définitive
 - 📄 Journalisation automatique dans un fichier `.log` (optionnelle)
@@ -107,6 +130,22 @@ Script Python pour détecter et supprimer intelligemment les **doublons photos/v
 - Serveur Immich opérationnel (auto-hébergé ou public)
 - Une **clé API** valide
 - Python ≥ 3.7
+
+### Clé API et droits requis
+
+Créez une clé API dans Immich via **Paramètres → Clés API**. La clé doit posséder les droits suivants :
+
+| Droit | Rôle |
+|-------|------|
+| `duplicate.read` | Récupérer les groupes de doublons |
+| `asset.delete` | Supprimer les assets en doublon |
+| `asset.update` | Transférer localisation/EXIF (si `IMMICH_TRANSFER_METADATA=true`) |
+| `album.read` | Lire les appartenances aux albums pour le transfert |
+| `album.asset.create` | Ajouter le gardé aux albums (si `IMMICH_TRANSFER_METADATA=true`) |
+| `album.asset.delete` | Retirer le gardé des albums (si `IMMICH_KEEP_METADATA=false`) |
+| `tag.asset` | Ajouter/retirer des tags pour le transfert |
+
+Une clé API avec accès complet inclut tous ces droits. Si vous utilisez uniquement `IMMICH_TRANSFER_METADATA=false` et `IMMICH_KEEP_METADATA=true`, les droits minimaux requis sont `duplicate.read` et `asset.delete`.
 
 ---
 
@@ -145,6 +184,9 @@ Script Python pour détecter et supprimer intelligemment les **doublons photos/v
    - `IMMICH_DRY_RUN` – `true` pour simuler uniquement (par défaut), `false` pour supprimer réellement
    - `IMMICH_DEFINITELY` – `false` pour la corbeille (par défaut), `true` pour suppression définitive
    - `IMMICH_ENABLE_LOG` – `true` ou `false` pour la création du fichier log
+   - `IMMICH_ONLY_PAIRS` – `false` (défaut) pour traiter tous les groupes, `true` pour n'accepter que les paires de 2 fichiers
+   - `IMMICH_KEEP_METADATA` – `true` (défaut) pour que le gardé conserve ses métadonnées, `false` pour les retirer avant transfert
+   - `IMMICH_TRANSFER_METADATA` – `true` (défaut) pour transférer albums, tags et localisation des supprimés vers le gardé
 
 Vous pouvez aussi définir ces variables d'environnement directement, sans fichier `.env`.
 
