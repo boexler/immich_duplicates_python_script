@@ -19,7 +19,8 @@ HEIC files (Apple originals), otherwise according to size, and finally EXIF meta
 
 Configuration can be provided via environment variables:
   IMMICH_SERVER, IMMICH_API_KEY, IMMICH_ENABLE_LOG, IMMICH_DRY_RUN, IMMICH_DEFINITELY,
-  IMMICH_ONLY_PAIRS, IMMICH_KEEP_METADATA, IMMICH_TRANSFER_METADATA
+  IMMICH_ONLY_PAIRS, IMMICH_KEEP_METADATA, IMMICH_TRANSFER_METADATA, IMMICH_CONFIRM,
+  IMMICH_REQUEST_TIMEOUT, IMMICH_DELETE_BATCH_SIZE
 
 Improvements welcome! Feel free to share with attribution.
 """
@@ -56,7 +57,9 @@ DEFINITELY = get_env_bool('IMMICH_DEFINITELY', False)
 ONLY_PAIRS = get_env_bool('IMMICH_ONLY_PAIRS', False)
 KEEP_METADATA = get_env_bool('IMMICH_KEEP_METADATA', True)
 TRANSFER_METADATA = get_env_bool('IMMICH_TRANSFER_METADATA', True)
-
+CONFIRM = get_env_bool('IMMICH_CONFIRM', False)
+REQUEST_TIMEOUT = max(1, int(os.environ.get('IMMICH_REQUEST_TIMEOUT', 5)))
+DELETE_BATCH_SIZE = max(1, int(os.environ.get('IMMICH_DELETE_BATCH_SIZE', 500)))
 
 
 if ENABLE_LOG_FILE:
@@ -81,15 +84,18 @@ HEADERS = {
     'x-api-key': API_KEY
 }
 try:
-    response = requests.get(f"{SERVER}/api/duplicates", headers=HEADERS)
+    response = requests.get(
+        f"{SERVER}/api/duplicates", headers=HEADERS, timeout=REQUEST_TIMEOUT
+    )
     response.raise_for_status()
     duplicates = response.json()
-except requests.RequestException :
+except requests.RequestException:
     print(f"[ERROR] Failed to retrieve duplicates, server {SERVER} unreachable or invalid API key.")
     exit(1)
 if not duplicates:
     print("[INFO] No duplicates found. Nothing to delete.")
     exit(0)
+print(f"[INFO] Found {len(duplicates)} duplicate groups.")
 
 
 # Step 2: Prepare the files to be deleted
@@ -175,7 +181,8 @@ def remove_kept_metadata(kept, headers_get, headers_json):
     kept_id = kept['id']
     try:
         albums_resp = requests.get(
-            f"{SERVER}/api/albums", params={"assetId": kept_id}, headers=headers_get
+            f"{SERVER}/api/albums", params={"assetId": kept_id}, headers=headers_get,
+            timeout=REQUEST_TIMEOUT
         )
         albums_resp.raise_for_status()
         albums = albums_resp.json()
@@ -185,6 +192,7 @@ def remove_kept_metadata(kept, headers_get, headers_json):
                     f"{SERVER}/api/albums/{album['id']}/assets",
                     headers=headers_json,
                     data=json.dumps({"ids": [kept_id]}),
+                    timeout=REQUEST_TIMEOUT,
                 )
                 if del_resp.status_code != 200:
                     print(f"[WARN] Could not remove kept from album {album.get('albumName', album['id'])}: {del_resp.status_code}")
@@ -199,6 +207,7 @@ def remove_kept_metadata(kept, headers_get, headers_json):
                     f"{SERVER}/api/tags/{tag_id}/assets",
                     headers=headers_json,
                     data=json.dumps({"ids": [kept_id]}),
+                    timeout=REQUEST_TIMEOUT,
                 )
                 if del_resp.status_code != 200:
                     print(f"[WARN] Could not remove tag {tag.get('name', tag_id)} from kept: {del_resp.status_code}")
@@ -219,7 +228,8 @@ def transfer_metadata_to_kept(kept, to_delete_assets, headers_get, headers_json)
         # Albums: add kept to each album to_delete is in
         try:
             albums_resp = requests.get(
-                f"{SERVER}/api/albums", params={"assetId": to_del['id']}, headers=headers_get
+                f"{SERVER}/api/albums", params={"assetId": to_del['id']}, headers=headers_get,
+                timeout=REQUEST_TIMEOUT
             )
             albums_resp.raise_for_status()
             for album in albums_resp.json():
@@ -228,6 +238,7 @@ def transfer_metadata_to_kept(kept, to_delete_assets, headers_get, headers_json)
                         f"{SERVER}/api/albums/{album['id']}/assets",
                         headers=headers_json,
                         data=json.dumps({"ids": [kept_id]}),
+                        timeout=REQUEST_TIMEOUT,
                     )
                     if add_resp.status_code not in (200, 201):
                         err_info = add_resp.json() if add_resp.text else {}
@@ -263,6 +274,7 @@ def transfer_metadata_to_kept(kept, to_delete_assets, headers_get, headers_json)
                 f"{SERVER}/api/tags/assets",
                 headers=headers_json,
                 data=json.dumps({"assetIds": [kept_id], "tagIds": new_tag_ids}),
+                timeout=REQUEST_TIMEOUT,
             )
             if tag_resp.status_code not in (200, 201):
                 print(f"[WARN] Could not add tags to kept: {tag_resp.status_code}")
@@ -273,15 +285,25 @@ def transfer_metadata_to_kept(kept, to_delete_assets, headers_get, headers_json)
     if exif_to_set:
         payload = {"ids": [kept_id], **{k: v for k, v in exif_to_set.items()}}
         try:
-            update_resp = requests.put(f"{SERVER}/api/assets", headers=headers_json, data=json.dumps(payload))
+            update_resp = requests.put(
+                f"{SERVER}/api/assets", headers=headers_json, data=json.dumps(payload),
+                timeout=REQUEST_TIMEOUT
+            )
             if update_resp.status_code not in (200, 204):
                 print(f"[WARN] Could not update EXIF on kept: {update_resp.status_code}")
         except requests.RequestException as e:
             print(f"[WARN] Error updating EXIF on kept: {e}")
 
 
+HEADERS_JSON = {
+    'Content-Type': 'application/json',
+    'x-api-key': API_KEY
+}
+HEADERS_GET = {'Accept': 'application/json', 'x-api-key': API_KEY}
+
 ids_to_delete = []
-processed_groups = []  # (kept, to_delete_assets) for metadata ops
+processed_groups = []  # (kept, to_delete_assets) for metadata ops when not CONFIRM
+
 i = 0
 for group in duplicates:
     i = i + 1
@@ -291,6 +313,7 @@ for group in duplicates:
         continue
     kept, reason = select_best_asset(assets)
     to_delete_assets = [a for a in assets if a['id'] != kept['id']]
+    to_delete_ids = [a['id'] for a in to_delete_assets]
     date, is_heic, size, exif_count = get_asset_info(kept)
     date_str = date.strftime('%d/%m/%y - %H:%M:%S') if date != datetime.max else "??/??/??"
     print(f"\n[INFO] Duplicates n°{i} ({len(assets)} files), conservation reason : '{reason}'")
@@ -299,33 +322,77 @@ for group in duplicates:
         date, is_heic, size, exif_count = get_asset_info(asset)
         date_str = date.strftime('%d/%m/%y - %H:%M:%S') if date != datetime.max else "??/??/??"
         print(f"[DELETED]\tDate : {date_str}\tSize : {round(size/1024/1024,2)}MB\t\tNumber of EXIF : {exif_count}\t{asset['originalFileName']} --> {SERVER}/api/assets/{asset['id']}/thumbnail?size=preview")
-        ids_to_delete.append(asset['id'])
-    processed_groups.append((kept, to_delete_assets))
 
+    if CONFIRM:
+        reply = input("Process this group? [Y/n] ").strip().lower()
+        if reply == 'n':
+            continue
+        if DRY_RUN:
+            print(f"[INFO] Group {i} would be processed (dry run).")
+        else:
+            if not KEEP_METADATA:
+                remove_kept_metadata(kept, HEADERS_GET, HEADERS_JSON)
+            if TRANSFER_METADATA and to_delete_assets:
+                transfer_metadata_to_kept(kept, to_delete_assets, HEADERS_GET, HEADERS_JSON)
+            delete_response = None
+            try:
+                delete_response = requests.delete(
+                    f"{SERVER}/api/assets", headers=HEADERS_JSON,
+                    data=json.dumps({"force": DEFINITELY, "ids": to_delete_ids}),
+                    timeout=REQUEST_TIMEOUT,
+                )
+                delete_response.raise_for_status()
+                print(f"[SUCCESS] Group {i} processed ({len(to_delete_ids)} asset(s) deleted).")
+            except requests.RequestException:
+                status = delete_response.status_code if delete_response is not None else "N/A"
+                text = delete_response.text if delete_response is not None else "N/A"
+                print(f"[ERROR] Deletion failed for group {i}: {status}")
+                print(f"[DEBUG] API response: {text}")
+    else:
+        ids_to_delete.extend(to_delete_ids)
+        processed_groups.append((kept, to_delete_assets))
+        if i % 500 == 0:
+            print(f"[INFO] Processed groups 1-{i} / {len(duplicates)}...")
 
-# Step 3: Metadata operations (only when not dry run) then remove duplicates
-HEADERS_JSON = {
-    'Content-Type': 'application/json',
-    'x-api-key': API_KEY
-}
-HEADERS_GET = {'Accept': 'application/json', 'x-api-key': API_KEY}
-
+# Step 3: Non-CONFIRM path – metadata operations then bulk delete (only when not dry run)
 if DRY_RUN:
     print("\n[INFO] Simulation mode enabled. No actual deletion performed.")
     exit(0)
 
-# Metadata: remove from kept (KEEP_METADATA=false) then transfer from to_delete (TRANSFER_METADATA=true)
-for kept, to_delete_assets in processed_groups:
-    if not KEEP_METADATA:
-        remove_kept_metadata(kept, HEADERS_GET, HEADERS_JSON)
-    if TRANSFER_METADATA and to_delete_assets:
-        transfer_metadata_to_kept(kept, to_delete_assets, HEADERS_GET, HEADERS_JSON)
+if not CONFIRM:
+    total_groups = len(processed_groups)
+    if total_groups > 0:
+        print(f"[INFO] Transferring metadata for {total_groups} groups...")
+    for idx, (kept, to_delete_assets) in enumerate(processed_groups):
+        if (idx + 1) % 100 == 0:
+            print(f"[INFO] Metadata progress: {idx + 1}/{total_groups} groups...")
+        if not KEEP_METADATA:
+            remove_kept_metadata(kept, HEADERS_GET, HEADERS_JSON)
+        if TRANSFER_METADATA and to_delete_assets:
+            transfer_metadata_to_kept(kept, to_delete_assets, HEADERS_GET, HEADERS_JSON)
 
-PAYLOAD = json.dumps({"force": DEFINITELY, "ids": ids_to_delete})
-try:
-    delete_response = requests.delete(f"{SERVER}/api/assets", headers=HEADERS_JSON, data=PAYLOAD)
-    delete_response.raise_for_status()
-    print(f"\n[SUCCESS] Deletion successful.")
-except requests.RequestException:
-    print(f"\n[ERROR] Deletion failed : {delete_response.status_code} is the HTTP status code returned.")
-    print(f"[DEBUG] API response : {delete_response.text if 'delete_response' in locals() else 'none'}")
+    total = len(ids_to_delete)
+    num_batches = (total + DELETE_BATCH_SIZE - 1) // DELETE_BATCH_SIZE
+    print(f"[INFO] Deleting {total} assets in {num_batches} batches (batch size: {DELETE_BATCH_SIZE})...")
+    delete_response = None
+    failed_batches = 0
+    for batch_idx in range(0, total, DELETE_BATCH_SIZE):
+        batch_ids = ids_to_delete[batch_idx : batch_idx + DELETE_BATCH_SIZE]
+        batch_num = batch_idx // DELETE_BATCH_SIZE + 1
+        try:
+            delete_response = requests.delete(
+                f"{SERVER}/api/assets", headers=HEADERS_JSON,
+                data=json.dumps({"force": DEFINITELY, "ids": batch_ids}),
+                timeout=REQUEST_TIMEOUT,
+            )
+            delete_response.raise_for_status()
+            print(f"[INFO] Batch {batch_num}/{num_batches}: {len(batch_ids)} assets deleted.")
+        except requests.RequestException as e:
+            failed_batches += 1
+            text = delete_response.text if delete_response is not None else str(e)
+            print(f"[ERROR] Batch {batch_num} failed: {e}")
+            print(f"[DEBUG] API response: {text}")
+    if failed_batches == 0:
+        print(f"\n[SUCCESS] Deletion complete. {total} assets removed.")
+    else:
+        print(f"\n[WARN] Deletion finished with {failed_batches} failed batch(es). Check errors above.")
