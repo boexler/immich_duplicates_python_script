@@ -17,22 +17,41 @@ HEIC files (Apple originals), otherwise according to size, and finally EXIF meta
 - Detailed logging to a .log file if enabled
 - Ability to view files with their URLs in the logs
 
+Configuration can be provided via environment variables:
+  IMMICH_SERVER, IMMICH_API_KEY, IMMICH_ENABLE_LOG, IMMICH_DRY_RUN, IMMICH_DEFINITELY
+
 Improvements welcome! Feel free to share with attribution.
 """
 
 
+import os
 import requests
 import json
 from datetime import datetime
 import sys
 
-# User configuration:
-ENABLE_LOG_FILE = True # True = creates an immich_duplicates.log file, False = no log file
-SERVER = "https://immich.example.com"  # Replace with the URL of your Immich server or, failing that, the IP address.
-API_KEY = "ENTER_YOUR_API_KEY_HERE" # Replace with your Immich API key
-DRY_RUN = True  # True = only simulates to see the selected files in the output, does not actually delete them
-# Set to False to actually delete duplicates
-DEFINITELY = False  # True = permanently deleted, False = in the recycle bin
+# Load .env file if python-dotenv is installed (optional)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+
+def get_env_bool(name: str, default: bool) -> bool:
+    """Parse boolean from environment variable."""
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return val.lower() in ('true', '1', 'yes', 'on')
+
+
+# User configuration (from env vars, with fallbacks):
+ENABLE_LOG_FILE = get_env_bool('IMMICH_ENABLE_LOG', True)
+SERVER = os.environ.get('IMMICH_SERVER', 'https://immich.example.com')
+API_KEY = os.environ.get('IMMICH_API_KEY', 'ENTER_YOUR_API_KEY_HERE')
+DRY_RUN = get_env_bool('IMMICH_DRY_RUN', True)
+DEFINITELY = get_env_bool('IMMICH_DEFINITELY', False)
 
 
 

@@ -17,22 +17,41 @@ priorité aux fichiers HEIC (originaux d'apple), sinon selon la taille et enfin 
 - Journalisation détaillée dans un fichier .log si activée
 - Possibilité de visualiser les fichiers avec leur URL dans les logs
 
+Configuration via variables d'environnement :
+  IMMICH_SERVER, IMMICH_API_KEY, IMMICH_ENABLE_LOG, IMMICH_DRY_RUN, IMMICH_DEFINITELY
+
 Améliorations bienvenues ! Partage libre avec attribution.
 """
 
 
+import os
 import requests
 import json
 from datetime import datetime
 import sys
 
-# Configuration pour l'utilisateur :
-ENABLE_LOG_FILE = True # True = crée un fichier immich_duplicates.log, False = pas de fichier log
-SERVER = "https://immich.example.com"  # Remplacez par l'URL de votre serveur Immich ou à défaut, l'adresse IP
-API_KEY = "ENTER_YOUR_API_KEY_HERE" # Remplacez par votre clé API Immich
-DRY_RUN = True  # True = ne fait que simuler pour voir les fichiers choisis en sortie, ne supprime pas réellement
-# Mettre à False pour supprimer réellement les doublons
-DEFINITELY = False  # True = suppression définitive, False = dans la corbeille
+# Load .env file if python-dotenv is installed (optional)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+
+def get_env_bool(name: str, default: bool) -> bool:
+    """Parse boolean from environment variable."""
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return val.lower() in ('true', '1', 'yes', 'on')
+
+
+# Configuration (variables d'environnement, avec valeurs par défaut) :
+ENABLE_LOG_FILE = get_env_bool('IMMICH_ENABLE_LOG', True)
+SERVER = os.environ.get('IMMICH_SERVER', 'https://immich.example.com')
+API_KEY = os.environ.get('IMMICH_API_KEY', 'ENTER_YOUR_API_KEY_HERE')
+DRY_RUN = get_env_bool('IMMICH_DRY_RUN', True)
+DEFINITELY = get_env_bool('IMMICH_DEFINITELY', False)
 
 
 

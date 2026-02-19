@@ -1,0 +1,13 @@
+# Environment (contains API key)
+.env
+
+# Log files
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
